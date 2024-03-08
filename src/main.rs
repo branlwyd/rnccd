@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use log::{error, info};
 use reqwest::{
     header::{HeaderMap, HeaderValue, USER_AGENT},
     StatusCode,
 };
 use serde_derive::{Deserialize, Serialize};
+use tracing::{error, info};
 use std::{
     ffi::{OsStr, OsString},
     fs::File,
@@ -53,7 +53,9 @@ struct State {
 
 #[tokio::main]
 async fn main() {
-    simple_logger::init_with_env().unwrap();
+    tracing_subscriber::fmt()
+        .event_format(tracing_subscriber::fmt::format().with_target(false))
+        .init();
     let args = Args::parse();
 
     // Parse config & state files.
@@ -95,21 +97,17 @@ async fn main() {
         // Figure out what our current IP is.
         let current_addr = match current_address(&client).await {
             Ok(addr) => addr,
-            Err(e) => {
-                error!("Couldn't get current IP address: {}", e);
+            Err(err) => {
+                error!(%err, "Couldn't get current IP address");
                 continue;
             }
         };
 
         // Update IP in Namecheap if it differs.
         if Some(current_addr) != namecheap_addr {
-            info!(
-                "Detected new IP ({} -> {}), updating",
-                fmt_optional_addr(&namecheap_addr),
-                current_addr
-            );
+            info!(old_addr = ?namecheap_addr, new_addr = ?current_addr, "Detected new IP, updating");
             if let Err(err) = update_address(&client, &cfg, current_addr).await {
-                error!("Couldn't update IP address: {}", err);
+                error!(%err, "Couldn't update IP address");
                 continue;
             }
             namecheap_addr = Some(current_addr);
@@ -121,18 +119,11 @@ async fn main() {
                 addr: Some(current_addr),
             };
             if let Err(err) = update_state(&args.state, &new_state).await {
-                error!("Couldn't write state file: {}", err);
+                error!(%err, "Couldn't write state file");
                 continue;
             }
             state = new_state;
         }
-    }
-}
-
-fn fmt_optional_addr(addr: &Option<Ipv4Addr>) -> String {
-    match addr {
-        None => "None".into(),
-        Some(a) => a.to_string(),
     }
 }
 
